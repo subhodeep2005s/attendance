@@ -22,7 +22,7 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 console.log(process.env.EMAIL_USER, process.env.EMAIL_PASS);
 
 async function sendEmail({ to, subject, text, html, attachmentPath }) {
-  const transporter = nodemailer.createTransporter({
+  const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
@@ -35,20 +35,22 @@ async function sendEmail({ to, subject, text, html, attachmentPath }) {
     to,
     subject,
     text,
-    attachments: [
-      {
-        filename: path.basename(attachmentPath),
-        path: attachmentPath,
-      },
-    ],
+    attachments: [],
   };
 
   if (html) {
     mailOptions.html = html;
   }
 
+  if (attachmentPath) {
+    mailOptions.attachments.push({
+      filename: path.basename(attachmentPath),
+      path: attachmentPath,
+    });
+  }
+
   await transporter.sendMail(mailOptions);
-  console.log(`📧 Email sent to ${to} with attachment ${attachmentPath}`);
+  console.log(`📧 Email sent to ${to} ${attachmentPath ? "with attachment" : ""}`);
 }
 
 // ----------------- Users -----------------
@@ -80,30 +82,42 @@ async function saveUsers() {
 }
 
 // ----------------- Puppeteer with @sparticuz/chromium -----------------
+async function launchBrowserWithRetry(retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await puppeteer.launch({
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath(),
+        headless: true,
+        ignoreHTTPSErrors: true,
+      });
+    } catch (err) {
+      if (err.code === "ETXTBSY" && i < retries - 1) {
+        console.warn("Chromium busy, retrying in 1s...");
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 async function loginAndScreenshot({ name, username, password, email }) {
   const TARGET_URL = "https://lms.cuonlineedu.in/";
   const ATTENDANCE_URL = "https://lms.cuonlineedu.in/my-attendance";
 
-  // Configure Chromium for serverless environment
-  const browser = await puppeteer.launch({
-    args: [
-      ...chromium.args,
-      "--hide-scrollbars",
-      "--disable-web-security",
-      "--disable-features=VizDisplayCompositor",
-    ],
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
-    headless: chromium.headless,
-    ignoreHTTPSErrors: true,
-  });
+  let browser;
 
   try {
+    browser = await launchBrowserWithRetry();
     const page = await browser.newPage();
-    
-    // Set user agent to avoid detection
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    
+
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    );
+
     await page.goto(TARGET_URL, { waitUntil: "networkidle2", timeout: 60000 });
 
     await page.type("#username", username, { delay: 40 });
@@ -115,7 +129,7 @@ async function loginAndScreenshot({ name, username, password, email }) {
     ]);
 
     await page.goto(ATTENDANCE_URL, { waitUntil: "networkidle2", timeout: 60000 });
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 2000));
 
     const screenshotPath = path.join(__dirname, `screenshots/${username}.png`);
     await fs.mkdir(path.dirname(screenshotPath), { recursive: true });
@@ -127,26 +141,14 @@ async function loginAndScreenshot({ name, username, password, email }) {
       await sendEmail({
         to: email,
         subject: "✅ Attendance Automated Successfully | Daily Screenshot",
-        text: `Hi ${name},
-
-✅ Your attendance has been successfully automated!
-📸 Screenshot captured and attached
-⏰ Next automation: Tomorrow at 8:00 AM IST
-
-For more info, visit https://subhodeep.tech
-
-Best regards,
-Attendance Automation Team`,
-
-        html: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: linear-gradient(135deg, #667eea, #764ba2); padding: 20px; border-radius: 10px;"><div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);"><div style="text-align: center; margin-bottom: 30px;"><div style="width: 60px; height: 60px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: white;">✓</div><h2 style="color: #333; margin: 0;">Attendance Automated!</h2></div><p style="color: #333; font-size: 16px; line-height: 1.6;">Hi <strong>${name}</strong>,</p><div style="background: #f0f8ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea;"><p style="color: #333; margin: 0; font-size: 16px;">✅ Your attendance screenshot has been captured successfully!<br>📸 Screenshot is attached to this email<br>⏰ Next automation: Tomorrow at 8:00 AM IST</p></div><p style="color: #333; font-size: 16px; line-height: 1.6;">This automation is brought to you by <a href="https://subhodeep.tech" style="color: #667eea; text-decoration: none;">subhodeep.tech</a></p><div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;"><p style="color: #666; font-size: 12px; margin: 0;">Powered by Attendance Automation System</p></div></div></div>`,
-        
+        text: `Hi ${name},\n\n✅ Your attendance has been automated!\n📸 Screenshot attached.\n⏰ Next run: Tomorrow at 8:00 AM IST\n\nBest,\nAutomation Bot`,
         attachmentPath: screenshotPath,
       });
     }
   } catch (err) {
     console.error(`[${username}] ❌ Login failed:`, err.message);
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 
@@ -154,8 +156,10 @@ Attendance Automation Team`,
 function scheduleUserJob({ name, username, password, email }) {
   if (!username || !password) return;
 
-  // Change back to daily at 8 AM IST for production
- const cronTime = "*/3 * * * *";
+  // Daily at 8 AM IST
+  // const cronTime = "0 8 * * *";
+  // for testing every minute use: const cronTime = "* * * * *";
+  const cronTime = "*/2 * * * *";
 
   if (scheduledJobs[username]) scheduledJobs[username].stop();
 
@@ -233,4 +237,3 @@ cron.schedule("59 7 * * *", async () => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
-

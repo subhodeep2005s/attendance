@@ -6,21 +6,29 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "build": "echo 'Nothing to build'"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "ejs": "^3.1.9",
-    "puppeteer-core": "^21.3.8",
     "@sparticuz/chromium": "^119.0.0",
-    "nodemailer": "^6.9.7",
+    "dotenv": "^16.3.1",
+    "ejs": "^3.1.9",
+    "express": "^4.18.2",
     "node-cron": "^3.0.2",
-    "dotenv": "^16.3.1"
+    "nodemailer": "^6.9.7",
+    "puppeteer-core": "^21.3.8"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["attendance", "automation", "puppeteer", "email"],
+  "keywords": [
+    "attendance",
+    "automation",
+    "puppeteer",
+    "email",
+    "render",
+    "serverless"
+  ],
   "author": "Your Name",
   "license": "MIT"
 }
