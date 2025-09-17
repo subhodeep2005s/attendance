@@ -3,7 +3,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import cron from "node-cron";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import nodemailer from "nodemailer";
 import "dotenv/config";
 
@@ -20,9 +21,8 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 }
 console.log(process.env.EMAIL_USER, process.env.EMAIL_PASS);
 
-// FIXED: Added html parameter and proper structure
 async function sendEmail({ to, subject, text, html, attachmentPath }) {
-  const transporter = nodemailer.createTransport({
+  const transporter = nodemailer.createTransporter({
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
@@ -43,7 +43,6 @@ async function sendEmail({ to, subject, text, html, attachmentPath }) {
     ],
   };
 
-  // Add HTML if provided
   if (html) {
     mailOptions.html = html;
   }
@@ -62,7 +61,6 @@ async function loadUsers() {
     const data = await fs.readFile(USERS_FILE, "utf-8");
     users = JSON.parse(data);
 
-    // Stop old jobs before rescheduling
     Object.values(scheduledJobs).forEach(job => job.stop());
     Object.keys(scheduledJobs).forEach(key => delete scheduledJobs[key]);
 
@@ -81,18 +79,31 @@ async function saveUsers() {
   await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
-// ----------------- Puppeteer Login + Email -----------------
+// ----------------- Puppeteer with @sparticuz/chromium -----------------
 async function loginAndScreenshot({ name, username, password, email }) {
   const TARGET_URL = "https://lms.cuonlineedu.in/";
   const ATTENDANCE_URL = "https://lms.cuonlineedu.in/my-attendance";
 
+  // Configure Chromium for serverless environment
   const browser = await puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      ...chromium.args,
+      "--hide-scrollbars",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor",
+    ],
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath(),
+    headless: chromium.headless,
+    ignoreHTTPSErrors: true,
   });
 
   try {
     const page = await browser.newPage();
+    
+    // Set user agent to avoid detection
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    
     await page.goto(TARGET_URL, { waitUntil: "networkidle2", timeout: 60000 });
 
     await page.type("#username", username, { delay: 40 });
@@ -112,7 +123,6 @@ async function loginAndScreenshot({ name, username, password, email }) {
 
     console.log(`[${username}] ✅ Screenshot saved: ${screenshotPath}`);
 
-    // FIXED: Proper email sending with html parameter
     if (email) {
       await sendEmail({
         to: email,
@@ -144,10 +154,8 @@ Attendance Automation Team`,
 function scheduleUserJob({ name, username, password, email }) {
   if (!username || !password) return;
 
-  // Daily at 8 AM IST (change if needed)
-  const cronTime = "0 8 * * *";
-  // 🔹 For testing, change to run every 2 minutes:
-  // const cronTime = "*/1 * * * *";
+  // Change back to daily at 8 AM IST for production
+ const cronTime = "*/3 * * * *";
 
   if (scheduledJobs[username]) scheduledJobs[username].stop();
 
@@ -202,7 +210,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "UP", time: new Date().toISOString() });
 });
 
-// FIXED: Health check cron job with proper error handling
+// Health check cron job
 cron.schedule("*/13 * * * *", async () => {
   try {
     const response = await fetch(`${URL}/health`);
@@ -225,3 +233,4 @@ cron.schedule("59 7 * * *", async () => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+
